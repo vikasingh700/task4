@@ -1,85 +1,76 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const LocalSession = require('telegraf-session-local');
 const axios = require('axios');
 const exec = require('child_process').exec;
 
-// Initialize bot
+// Define your VPS name here
+const VPS_NAME = "VPS_01";  // Change this to match the name of your VPS
+
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-const session = new LocalSession({
-  getSessionKey: (ctx) => ctx.from && ctx.from.id ? ctx.from.id.toString() : undefined
-});
-bot.use(session.middleware());
 
-// VPS details
-const vpsDetails = {
-  VPS1: {
-    name: 'VPS-1',
-    status: 'running',
-  },
-  VPS2: {
-    name: 'VPS-2',
-    status: 'running',
-  },
-  VPS3: {
-    name: 'VPS-3',
-    status: 'running',
-  },
-  VPS4: {
-    name: 'VPS-4',
-    status: 'running',
-  }
-};
-
-// Function to send a message to Telegram
-const sendTelegramMessage = async (message) => {
+// Function to send crash notifications to Telegram
+async function sendTelegramMessage(message) {
   try {
-    await bot.telegram.sendMessage(process.env.TELEGRAM_CHAT_ID, message);
-  } catch (error) {
-    console.error('Error sending message to Telegram:', error);
+    await axios.post(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      chat_id: process.env.TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'Markdown'
+    });
+  } catch (err) {
+    console.error('Error sending message:', err);
   }
-};
+}
 
-// Function to report crash
-const reportCrash = (vpsName, error) => {
-  const crashMessage = `🚨 CRASH ALERT 🚨\nVPS: ${vpsName}\nError: ${error}\nStatus: Crashed`;
-  sendTelegramMessage(crashMessage);
-};
+// Function to handle crash and send notification
+async function handleCrashNotification(error) {
+  const message = `🚨 *VPS ${VPS_NAME} has crashed!*\n\n` +
+                  `*Error Message*: ${error}\n\n` +
+                  `Check the system for further diagnostics.`;
+  await sendTelegramMessage(message);
+}
 
-// Function to check VPS status
-const getVPSStatus = (vpsName) => {
-  exec(`ps aux | grep run_rl_swarm.sh | grep -v grep`, (error, stdout, stderr) => {
-    if (error || stderr) {
-      vpsDetails[vpsName].status = 'crashed';
-      reportCrash(vpsName, stderr || error);
+// Function to show VPS status with /status command
+bot.command('status', async (ctx) => {
+  const message = `*VPS ${VPS_NAME} Status:* 🚀 Running`;
+  await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
+// Function to simulate the task running in the VPS
+async function runVpsTask() {
+  exec('./your_task.sh', (error, stdout, stderr) => {
+    if (error) {
+      handleCrashNotification(error.message);  // Send crash notification if task fails
     } else {
-      vpsDetails[vpsName].status = 'running';
+      console.log('Task completed successfully.');
     }
   });
-};
+}
 
-// Handle /status command to report current VPS status
-bot.command('status', async (ctx) => {
-  let statusMessage = '📊 VPS Status:\n\n';
-  for (const vps in vpsDetails) {
-    statusMessage += `${vpsDetails[vps].name}: ${vpsDetails[vps].status}\n`;
-  }
-  await ctx.reply(statusMessage);
+// Command to manually trigger VPS task and status
+bot.command('start_task', async (ctx) => {
+  const message = `🔄 Starting task on VPS ${VPS_NAME}...`;
+  await ctx.reply(message, { parse_mode: 'Markdown' });
+  runVpsTask();
 });
 
-// Handle /start command
+// Handle start command and bot introduction
 bot.command('start', (ctx) => {
   ctx.reply(
-    'Welcome to the VPS Watchdog Bot. Use /status to get current VPS status.\nThe bot will send alerts if any of the VPS nodes crash.'
+    `Welcome to the VPS Monitoring Bot! I'm monitoring the status of *VPS ${VPS_NAME}*.\n\n` +
+    'Use the following commands:\n' +
+    '/status - Check the VPS status\n' +
+    '/start_task - Start the task on the VPS and monitor the status\n',
+    { parse_mode: 'Markdown' }
   );
 });
 
-// Check VPS statuses every minute
-setInterval(() => {
-  for (const vps in vpsDetails) {
-    getVPSStatus(vps);
-  }
-}, 60000); // Check every minute
+// Start the bot
+bot.launch().then(() => {
+  console.log(`Bot is running and monitoring *VPS ${VPS_NAME}*`);
+  // Optionally, start the VPS task on launch if desired
+  runVpsTask();
+});
 
-bot.launch();
-console.log('VPS Watchdog Bot is running...');
+// Handle shutdown signals
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
